@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Absensi QR Code</title>
+    <!-- Tailwind CSS untuk Tampilan Modern & Responsif -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Library QR Code Scanner -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <!-- Library Export Excel (SheetJS) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto space-y-6">
+        <!-- Header -->
+        <header class="bg-emerald-700 text-white p-6 rounded-2xl shadow-lg text-center">
+            <h1 class="text-2xl md:text-3xl font-bold">Aplikasi Absensi Siswa</h1>
+            <p class="text-emerald-100 text-sm mt-1">Pindai QR Code Kartu Pelajar untuk Absensi Harian</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Area Kamera / Scanner -->
+            <div class="bg-white p-5 rounded-2xl shadow-md flex flex-col items-center">
+                <h2 class="text-lg font-semibold mb-4 text-emerald-800 flex items-center gap-2">
+                    📷 Kamera Scanner
+                </h2>
+                <div id="reader" class="w-full overflow-hidden rounded-xl border-2 border-emerald-500 bg-black"></div>
+                <p id="scan-status" class="text-xs text-slate-500 mt-3 text-center">Arahkan QR Code ke kamera</p>
+            </div>
+
+            <!-- Tampilan Hasil Scan Terakhir -->
+            <div class="bg-white p-5 rounded-2xl shadow-md flex flex-col justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold mb-4 text-emerald-800">Status Presensi Terakhir</h2>
+                    <div id="last-scan-card" class="bg-slate-50 p-6 rounded-xl border border-slate-200 text-center">
+                        <span class="text-4xl">👋</span>
+                        <p class="text-slate-400 mt-2 font-medium">Belum ada siswa yang melakukan scan.</p>
+                    </div>
+                </div>
+
+                <!-- Tombol Aksi -->
+                <div class="mt-6 space-y-2">
+                    <button onclick="exportToExcel()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 px-4 rounded-xl transition shadow flex items-center justify-center gap-2">
+                        📥 Download Laporan (Excel)
+                    </button>
+                    <button onclick="clearData()" class="w-full bg-rose-50 hover:bg-rose-100 text-rose-600 font-semibold py-2 px-4 rounded-xl text-sm transition">
+                        🗑️ Hapus Semua Data Hari Ini
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabel Log Absensi Realtime -->
+        <div class="bg-white p-5 rounded-2xl shadow-md overflow-hidden">
+            <h2 class="text-lg font-semibold mb-4 text-emerald-800">Daftar Kehadiran Realtime</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-emerald-50 text-emerald-900 border-b border-emerald-100">
+                            <th class="p-3 text-sm font-semibold">No</th>
+                            <th class="p-3 text-sm font-semibold">Nama Siswa</th>
+                            <th class="p-3 text-sm font-semibold">Waktu Masuk</th>
+                            <th class="p-3 text-sm font-semibold">Tanggal</th>
+                        </tr>
+                    </thead>
+                    <tbody id="attendance-table-body" class="divide-y divide-slate-100 text-sm">
+                        <!-- Data absensi akan di-render di sini via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Inisialisasi Data dari LocalStorage jika ada
+        let attendanceData = JSON.parse(localStorage.getItem('absensi_siswa')) || [];
+        let isProcessing = false; // Mencegah double scan berturut-turut dalam rentang detik
+
+        // Render data saat pertama kali dimuat
+        renderTable();
+
+        // 1. Fungsi saat QR Code Berhasil Terbaca
+        function onScanSuccess(decodedText) {
+            if (isProcessing) return; // Abaikan jika sedang memproses scan sebelumnya
+
+            isProcessing = true;
+            const namaSiswa = decodedText.trim();
+            const now = new Date();
+            
+            const jamMasuk = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const tanggal = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+
+            // Cek apakah siswa sudah absensi hari ini (Opsional)
+            const sudahAbsen = attendanceData.some(item => item.nama === namaSiswa && item.tanggal === tanggal);
+
+            if (sudahAbsen) {
+                showLastScanCard(namaSiswa, jamMasuk, '⚠️ Sudah Absen Hari Ini', 'bg-amber-50 border-amber-300 text-amber-800');
+            } else {
+                // Tambahkan data baru
+                const newRecord = {
+                    nama: namaSiswa,
+                    jam: jamMasuk,
+                    tanggal: tanggal
+                };
+                attendanceData.unshift(newRecord); // Tambahkan ke baris paling atas
+                
+                // Simpan ke LocalStorage
+                localStorage.setItem('absensi_siswa', JSON.stringify(attendanceData));
+
+                // Update UI
+                renderTable();
+                showLastScanCard(namaSiswa, jamMasuk, '✅ Absen Berhasil', 'bg-emerald-50 border-emerald-300 text-emerald-800');
+            }
+
+            // Beri jeda 3 detik sebelum bisa scan berikutnya
+            setTimeout(() => {
+                isProcessing = false;
+            }, 3000);
+        }
+
+        // 2. Tampilkan Info Scan Terakhir pada Kartu Highlight
+        function showLastScanCard(nama, jam, status, styleClass) {
+            const container = document.getElementById('last-scan-card');
+            container.className = `p-6 rounded-xl border text-center transition-all ${styleClass}`;
+            container.innerHTML = `
+                <span class="text-xs font-bold uppercase tracking-wider px-2 py-1 rounded bg-white shadow-sm">${status}</span>
+                <h3 class="text-xl font-bold mt-3 text-slate-800">${nama}</h3>
+                <p class="text-sm mt-1">Waktu: <span class="font-semibold">${jam} WIB</span></p>
+            `;
+        }
+
+        // 3. Render Tabel Realtime
+        function renderTable() {
+            const tbody = document.getElementById('attendance-table-body');
+            tbody.innerHTML = '';
+
+            if (attendanceData.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">Belum ada data absensi hari ini.</td></tr>`;
+                return;
+            }
+
+            attendanceData.forEach((item, index) => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50 transition";
+                tr.innerHTML = `
+                    <td class="p-3 font-medium text-slate-500">${attendanceData.length - index}</td>
+                    <td class="p-3 font-semibold text-slate-800">${item.nama}</td>
+                    <td class="p-3 text-emerald-600 font-medium">${item.jam}</td>
+                    <td class="p-3 text-slate-500">${item.tanggal}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // 4. Fitur Export ke Excel (.xlsx)
+        function exportToExcel() {
+            if (attendanceData.length === 0) {
+                alert("Tidak ada data untuk diimpor ke Excel!");
+                return;
+            }
+
+            // Format data untuk Excel
+            const excelData = attendanceData.map((item, index) => ({
+                "No": attendanceData.length - index,
+                "Nama Siswa": item.nama,
+                "Jam Masuk": item.jam,
+                "Tanggal": item.tanggal
+            }));
+
+            const worksheet = XLSX.utils.json_to_sheet(excelData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Absensi Harian");
+
+            // Format nama file berdasarkan tanggal saat ini
+            const today = new Date().toISOString().split('T')[0];
+            XLSX.writeFile(workbook, `Laporan_Absensi_${today}.xlsx`);
+        }
+
+        // 5. Fungsi Hapus Data
+        function clearData() {
+            if (confirm("Apakah Anda yakin ingin menghapus seluruh data absensi hari ini?")) {
+                attendanceData = [];
+                localStorage.removeItem('absensi_siswa');
+                renderTable();
+                document.getElementById('last-scan-card').className = "bg-slate-50 p-6 rounded-xl border border-slate-200 text-center";
+                document.getElementById('last-scan-card').innerHTML = `
+                    <span class="text-4xl">👋</span>
+                    <p class="text-slate-400 mt-2 font-medium">Belum ada siswa yang melakukan scan.</p>
+                `;
+            }
+        }
+
+        // 6. Jalankan Scanner Kamera
+        const html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", 
+            { 
+                fps: 10, 
+                qrbox: { width: 220, height: 220 },
+                aspectRatio: 1.0
+            }, 
+            /* verbose= */ false
+        );
+        html5QrcodeScanner.render(onScanSuccess);
+    </script>
+</body>
+</html>
